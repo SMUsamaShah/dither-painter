@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DitherPaint — FS-dither brush</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #151820;
+      --panel-2: #1a1f2b;
+      --muted: #8b93a7;
+      --text: #e8ecf1;
+      --accent: #6aa9ff;
+      --accent-2: #8de3ff;
+      --danger: #ff6a6a;
+      --ok: #6aff91;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: linear-gradient(180deg, var(--bg), #0b0d12);
+      color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+      display: grid; grid-template-rows: 56px 1fr; gap: 8px;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px; background: var(--panel); border-bottom: 1px solid #1f2330;
+    }
+    header .title {
+      display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: 0.3px;
+    }
+    header .title .badge { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 999px; background: #12253a; color: var(--accent);
+      border: 1px solid #1f3758; }
+    #app { display: grid; grid-template-columns: 320px 1fr; gap: 8px; padding: 0 8px 8px 8px; }
+    .panel { background: var(--panel); border: 1px solid #1f2330; border-radius: 14px; }
+    .controls { padding: 12px; display: grid; gap: 12px; grid-auto-rows: min-content; }
+    .group { background: var(--panel-2); border: 1px solid #252a39; border-radius: 12px; padding: 10px; }
+    .group h3 { margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .swatches { display: grid; grid-template-columns: repeat(8, 28px); gap: 8px; }
+    .swatch { width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.12); cursor: pointer; position: relative; }
+    .swatch.selected::after { content:""; position: absolute; inset: -3px; border: 2px solid var(--accent); border-radius: 8px; }
+    .btn { background: #1c2230; color: var(--text); border: 1px solid #2a3347; padding: 6px 10px; border-radius: 10px; cursor: pointer; font-weight: 600; }
+    .btn:hover { filter: brightness(1.08); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn.danger { border-color: #4e2b2b; background: #2b1c1c; color: #ffb3b3; }
+    .btn.ghost { background: transparent; border-color: #2a3347; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .slider { width: 160px; }
+    .canvas-wrap { position: relative; overflow: hidden; border-radius: 14px; }
+    canvas#main { background: #0b0d11; display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+    .toolbar { position: absolute; top: 10px; left: 10px; display: flex; gap: 8px; }
+    .pill { padding: 6px 10px; background: rgba(0,0,0,0.45); border: 1px solid #2a3347; border-radius: 999px; font-size: 12px; }
+    .status { position: absolute; bottom: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; gap: 8px; }
+    .kbd { border: 1px solid #2a3347; background: #161b26; padding: 2px 6px; border-radius: 6px; font-size: 12px; }
+    .hint { color: var(--muted); font-size: 12px; }
+    .preview { width: 100%; height: 96px; border-radius: 10px; border: 1px dashed #334; background: #0d1117; display: grid; place-items: center; font-size: 12px; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .hotkey { color: var(--muted); font-size: 12px; }
+    .stack-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .small { font-size: 12px; color: var(--muted); }
+    .link { color: var(--accent-2); text-decoration: underline; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">
+      <span style="font-size:18px">🎨 DitherPaint</span>
+      <span class="badge">Floyd–Steinberg Brush</span>
+    </div>
+    <div class="row">
+      <button id="undoBtn" class="btn" disabled>Undo (Ctrl+Z)</button>
+      <button id="redoBtn" class="btn" disabled>Redo (Ctrl+Y)</button>
+      <button id="openBtn" class="btn">Open Image</button>
+      <button id="ditherBtn" class="btn" disabled>Dither Canvas Now</button>
+      <button id="saveBtn" class="btn">Export PNG</button>
+      <span class="hint">Canvas: <span id="sizeLabel" class="mono">—</span></span>
+    </div>
+  </header>
+
+  <input id="openFile" type="file" accept="image/*" style="display:none" />
+  <input id="importPaletteFile" type="file" accept="application/json,.json" style="display:none" />
+
+  <div id="app">
+    <div class="panel">
+      <div class="controls">
+        <div class="group">
+          <h3>Desired Color (full gamut)</h3>
+          <div class="row">
+            <input id="colorPicker" type="color" value="#ff6aa0" />
+            <div class="row">
+              <label>Brush</label>
+              <input id="brushSize" class="slider" type="range" min="1" max="64" value="16" />
+              <span id="brushSizeLabel" class="mono">16</span>
+            </div>
+            <div class="row">
+              <label>Blend</label>
+              <input id="blend" class="slider" type="range" min="0" max="100" value="70" />
+              <span id="blendLabel" class="mono">70%</span>
+            </div>
+          </div>
+          <div class="grid" style="margin-top:8px">
+            <div>
+              <div class="small">Dithered preview (with current palette)</div>
+              <canvas id="preview" class="preview" width="160" height="96"></canvas>
+            </div>
+            <div>
+              <div class="small">Target swatch (no dithering)</div>
+              <div id="targetSwatch" class="preview" style="height:96px"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <h3>Palette (limited colors used for painting)</h3>
+          <div class="row">
+            <button id="addToPalette" class="btn">Add current color</button>
+            <button id="removeLastPalette" class="btn ghost">Remove last</button>
+            <button id="clearPalette" class="btn danger">Clear</button>
+            <button id="savePaletteBtn" class="btn ghost">Save palette</button>
+            <button id="importPaletteBtn" class="btn ghost">Import palette</button>
+          </div>
+          <div id="paletteGrid" class="swatches" style="margin-top:8px"></div>
+          <div class="hint" style="margin-top:6px">Click a swatch to set the desired color; brush always quantizes to this palette.</div>
+        </div>
+
+        <div class="group">
+          <h3>Options</h3>
+          <div class="row">
+            <label><input id="showCursor" type="checkbox" checked /> Show brush cursor</label>
+            <label><input id="lockToFS" type="checkbox" checked /> Use FS dithering (always on)</label>
+          </div>
+          <div class="small" style="margin-top:6px">Note: FS dithering is path-dependent; strokes are stamped left→right, top→bottom inside each dab for stability.</div>
+        </div>
+
+        <div class="group">
+          <h3>Shortcuts</h3>
+          <div class="hotkey">Hold <span class="kbd">Space</span> to pan • <span class="kbd">Ctrl/Cmd</span> + <span class="kbd">scroll</span> to zoom • <span class="kbd">Z</span>/<span class="kbd">Y</span> for undo/redo</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel canvas-wrap">
+      <div class="toolbar">
+        <div class="pill">Zoom: <span id="zoomLabel">100%</span></div>
+        <div class="pill">Palette size: <span id="paletteCount">0</span></div>
+      </div>
+      <canvas id="main" width="1280" height="800"></canvas>
+      <div class="status">
+        <div class="pill" id="statusText">Ready.</div>
+        <div class="pill hint">Tip: Add 2–6 palette colors for best dithers.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Utility: convert #rrggbb ↔ [r,g,b]
+    function hexToRgb(hex){ hex = hex.replace('#','');
+      if(hex.length===3) hex = hex.split('').map(c=>c+c).join('');
+      const num = parseInt(hex,16); return [(num>>16)&255,(num>>8)&255,num&255]; }
+    function rgbToHex(r,g,b){ return '#' + [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join(''); }
+
+    // Utility: sRGB ↔ linear for better mixing in FS computations
+    function srgbToLinear(c){ c/=255; return c<=0.04045? c/12.92 : Math.pow((c+0.055)/1.055,2.4); }
+    function linearToSrgb(x){ return Math.round((x<=0.0031308? 12.92*x : 1.055*Math.pow(x,1/2.4)-0.055)*255); }
+
+    // Perceptual distance via OKLab (lightweight implementation)
+    // Adapted constants; accuracy is adequate for palette nearest matches.
+    function rgbToOKLab(r,g,b){ // expects 0..255
+      // sRGB -> linear
+      const rl=srgbToLinear(r), gl=srgbToLinear(g), bl=srgbToLinear(b);
+      // linear sRGB -> LMS
+      const l = 0.4122214708*rl + 0.5363325363*gl + 0.0514459929*bl;
+      const m = 0.2119034982*rl + 0.6806995451*gl + 0.1073969566*bl;
+      const s = 0.0883024619*rl + 0.2817188376*gl + 0.6299787005*bl;
+      const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
+      return [0.2104542553*l_ + 0.7936177850*m_ - 0.0040720468*s_,
+              1.9779984951*l_ - 2.4285922050*m_ + 0.4505937099*s_,
+              0.0259040371*l_ + 0.7827717662*m_ - 0.8086757660*s_];
+    }
+    function okDist(a,b){ const dl=a[0]-b[0], da=a[1]-b[1], db=a[2]-b[2]; return dl*dl+da*da+db*db; }
+
+    function nearestPaletteColor(r,g,b,palette){
+      if(palette.length===0) return [r,g,b];
+      const lab = rgbToOKLab(r,g,b);
+      let best=0, bestd=Infinity;
+      for(let i=0;i<palette.length;i++){
+        const p = palette[i];
+        const d = okDist(lab, p.oklab);
+        if(d<bestd){ bestd=d; best=i; }
+      }
+      return palette[best].rgb;
+    }
+
+    // Floyd–Steinberg quantization for a small stamp buffer (w*h, RGBA in Uint8ClampedArray)
+    function fsQuantizeStamp(stamp, w, h, palette){
+      // Work on linear RGB floats for error diffusion
+      const buf = new Float32Array(w*h*3);
+      // Small stochastic pre-noise to decorrelate repeated dabs (helps avoid banded, rail-like lines)
+      const NOISE = 0.0018; // linear RGB domain (~tiny)
+      for(let i=0;i<w*h;i++){
+        const r=stamp[i*4], g=stamp[i*4+1], b=stamp[i*4+2], a=stamp[i*4+3];
+        if(a<1){ buf[i*3]=0; buf[i*3+1]=0; buf[i*3+2]=0; continue; }
+        // Convert to linear and add small zero-mean noise
+        buf[i*3  ] = srgbToLinear(r) + (Math.random()-0.5)*NOISE;
+        buf[i*3+1] = srgbToLinear(g) + (Math.random()-0.5)*NOISE;
+        buf[i*3+2] = srgbToLinear(b) + (Math.random()-0.5)*NOISE;
+      }
+      // Iterate scanlines with serpentine traversal to reduce directional artifacts
+      for(let y=0;y<h;y++){
+        const leftToRight = (y % 2) === 0; // even rows L->R, odd R->L
+        if(leftToRight){
+          for(let x=0;x<w;x++){
+            const i = y*w+x;
+            const a = stamp[i*4+3];
+            if(a<1){ continue; }
+            // current color in sRGB space for nearest search
+            const rc = linearToSrgb(buf[i*3]);
+            const gc = linearToSrgb(buf[i*3+1]);
+            const bc = linearToSrgb(buf[i*3+2]);
+            const [nr,ng,nb] = nearestPaletteColor(rc,gc,bc,palette);
+            // write quantized color to stamp
+            stamp[i*4] = nr; stamp[i*4+1]=ng; stamp[i*4+2]=nb; stamp[i*4+3]=255;
+            // propagate error in linear domain
+            const er = srgbToLinear(rc) - srgbToLinear(nr);
+            const eg = srgbToLinear(gc) - srgbToLinear(ng);
+            const eb = srgbToLinear(bc) - srgbToLinear(nb);
+            function add(xo,yo,coef){ const xx=x+xo, yy=y+yo; if(xx<0||yy<0||xx>=w||yy>=h) return; const j=(yy*w+xx)*3; buf[j]+=er*coef; buf[j+1]+=eg*coef; buf[j+2]+=eb*coef; }
+            add(1,0,7/16); add(-1,1,3/16); add(0,1,5/16); add(1,1,1/16);
+          }
+        } else {
+          for(let x=w-1;x>=0;x--){
+            const i = y*w+x;
+            const a = stamp[i*4+3];
+            if(a<1){ continue; }
+            const rc = linearToSrgb(buf[i*3]);
+            const gc = linearToSrgb(buf[i*3+1]);
+            const bc = linearToSrgb(buf[i*3+2]);
+            const [nr,ng,nb] = nearestPaletteColor(rc,gc,bc,palette);
+            stamp[i*4] = nr; stamp[i*4+1]=ng; stamp[i*4+2]=nb; stamp[i*4+3]=255;
+            const er = srgbToLinear(rc) - srgbToLinear(nr);
+            const eg = srgbToLinear(gc) - srgbToLinear(ng);
+            const eb = srgbToLinear(bc) - srgbToLinear(nb);
+            function add(xo,yo,coef){ const xx=x+xo, yy=y+yo; if(xx<0||yy<0||xx>=w||yy>=h) return; const j=(yy*w+xx)*3; buf[j]+=er*coef; buf[j+1]+=eg*coef; buf[j+2]+=eb*coef; }
+            // mirrored neighbors for R->L
+            add(-1,0,7/16); add(1,1,3/16); add(0,1,5/16); add(-1,1,1/16);
+          }
+        }
+      }
+      return stamp;
+    }
+
+    // Simple store for undo/redo
+    const History = (limit=25)=>{
+      const stack=[]; let idx=-1; return {
+        push(img){
+          // Drop redo tail, cap length
+          stack.splice(idx+1);
+          stack.push(img); if(stack.length>limit){ stack.shift(); } idx = stack.length-1;
+        },
+        canUndo(){ return idx>0; },
+        canRedo(){ return idx<stack.length-1; },
+        undo(){ if(idx>0){ idx--; return stack[idx]; } return null; },
+        redo(){ if(idx<stack.length-1){ idx++; return stack[idx]; } return null; },
+        peek(){ return stack[idx]||null; }
+      };
+    };
+
+    // App state
+    const canvas = document.getElementById('main');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = false;
+
+    const preview = document.getElementById('preview');
+    const pctx = preview.getContext('2d', { willReadFrequently: true });
+
+    const colorPicker = document.getElementById('colorPicker');
+    const targetSwatch = document.getElementById('targetSwatch');
+    const paletteGrid = document.getElementById('paletteGrid');
+    const paletteCount = document.getElementById('paletteCount');
+    const brushSizeEl = document.getElementById('brushSize');
+    const brushSizeLabel = document.getElementById('brushSizeLabel');
+    const blendEl = document.getElementById('blend');
+    const blendLabel = document.getElementById('blendLabel');
+    const statusText = document.getElementById('statusText');
+    const sizeLabel = document.getElementById('sizeLabel');
+    const zoomLabel = document.getElementById('zoomLabel');
+    const showCursorEl = document.getElementById('showCursor');
+
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const openBtn = document.getElementById('openBtn');
+    const openFile = document.getElementById('openFile');
+    const ditherBtn = document.getElementById('ditherBtn');
+
+    const savePaletteBtn = document.getElementById('savePaletteBtn');
+    const importPaletteBtn = document.getElementById('importPaletteBtn');
+    const importPaletteFile = document.getElementById('importPaletteFile');
+
+    // Palette structure: [{ rgb:[r,g,b], oklab:[L,a,b] }]
+    const palette = [];
+
+    // View transform
+    let zoom = 1; let offsetX = 0, offsetY = 0; let panning=false; let panStart=[0,0]; let panFrom=[0,0];
+
+    function updateLabels(){
+      sizeLabel.textContent = `${canvas.width}×${canvas.height}`;
+      zoomLabel.textContent = Math.round(zoom*100)+'%';
+      paletteCount.textContent = palette.length;
+      brushSizeLabel.textContent = brushSizeEl.value;
+      blendLabel.textContent = blendEl.value + '%';
+      targetSwatch.style.background = colorPicker.value;
+      // Enable dither button if there is some content and a palette
+      ditherBtn.disabled = palette.length===0 || (canvas.width*canvas.height===0);
+    }
+
+    // Palette UI
+    function renderPalette(){
+      paletteGrid.innerHTML = '';
+      palette.forEach((p,idx)=>{
+        const d = document.createElement('div'); d.className='swatch'; d.style.background = rgbToHex(...p.rgb);
+        d.title = `#${p.rgb.map(v=>v.toString(16).padStart(2,'0')).join('')}`;
+        d.addEventListener('click',()=>{ colorPicker.value = rgbToHex(...p.rgb); onColorChange(); });
+        paletteGrid.appendChild(d);
+      });
+    }
+    function addCurrentToPalette(){
+      const rgb = hexToRgb(colorPicker.value);
+      // Avoid duplicates
+      if(palette.some(p=> p.rgb[0]===rgb[0] && p.rgb[1]===rgb[1] && p.rgb[2]===rgb[2])){ flash('Color already in palette.'); return; }
+      palette.push({ rgb, oklab: rgbToOKLab(...rgb) }); renderPalette(); updateLabels(); drawPreview();
+    }
+
+    document.getElementById('addToPalette').addEventListener('click', addCurrentToPalette);
+    document.getElementById('removeLastPalette').addEventListener('click', ()=>{ palette.pop(); renderPalette(); updateLabels(); drawPreview(); });
+    document.getElementById('clearPalette').addEventListener('click', ()=>{ palette.length=0; renderPalette(); updateLabels(); drawPreview(); });
+
+    function onColorChange(){ updateLabels(); drawPreview(); }
+    colorPicker.addEventListener('input', onColorChange);
+
+    // Preview pane: render a gradient block dithered to palette toward desired color
+    function drawPreview(){
+      pctx.clearRect(0,0,preview.width, preview.height);
+      // Fill target gradient: left is darkened target, right is target
+      const rgb = hexToRgb(colorPicker.value); const w=preview.width, h=preview.height;
+      const id = pctx.createImageData(w,h);
+      for(let y=0;y<h;y++){
+        for(let x=0;x<w;x++){
+          const i=(y*w+x)*4; const t = x/(w-1); // 0..1
+          const r = Math.round(rgb[0]*(0.3+0.7*t));
+          const g = Math.round(rgb[1]*(0.3+0.7*t));
+          const b = Math.round(rgb[2]*(0.3+0.7*t));
+          id.data[i]=r; id.data[i+1]=g; id.data[i+2]=b; id.data[i+3]=255;
+        }
+      }
+      fsQuantizeStamp(id.data, w, h, palette);
+      pctx.putImageData(id,0,0);
+    }
+
+    // Drawing state
+    let drawing=false; let lastPos=null; let spaceKey=false; let ctrlKey=false;
+    const history = History(40);
+
+    function flash(msg){ statusText.textContent = msg; clearTimeout(flash._t); flash._t = setTimeout(()=>{ statusText.textContent='Ready.'; }, 1500); }
+
+    // Convert client -> canvas pixel (taking zoom+pan into account)
+    function clientToCanvas(x,y){
+      const rect = canvas.getBoundingClientRect();
+      const cx = (x-rect.left)/rect.width * canvas.width;
+      const cy = (y-rect.top)/rect.height * canvas.height;
+      return [ (cx - offsetX)/zoom, (cy - offsetY)/zoom ];
+    }
+
+    // Draw a single dithered brush dab centered at canvas pixel coords (subpixel allowed)
+    function drawDab(cx, cy){
+      if(palette.length===0){ flash('Add at least 1 color to the palette.'); return; }
+      const size = parseInt(brushSizeEl.value,10);
+      const r = size/2;
+      const w = size|0, h=size|0;
+      // Determine paste location with slight jitter
+      const jitter = 0.35; // px
+      const jx = (Math.random()*2-1)*jitter;
+      const jy = (Math.random()*2-1)*jitter;
+      const dx = Math.round((cx + jx - r));
+      const dy = Math.round((cy + jy - r));
+
+      // Compute safe source region on canvas
+      const sx0 = Math.max(0, Math.min(dx, canvas.width));
+      const sy0 = Math.max(0, Math.min(dy, canvas.height));
+      const w0  = Math.max(0, Math.min(w, canvas.width - sx0));
+      const h0  = Math.max(0, Math.min(h, canvas.height - sy0));
+
+      // 1) Prepare target ImageData filled with background
+      const id = new ImageData(w,h);
+      for(let i=0;i<w*h;i++){ id.data[i*4]=11; id.data[i*4+1]=13; id.data[i*4+2]=17; id.data[i*4+3]=255; }
+
+      // 2) Read existing canvas subregion (if any) and copy into id at correct offset
+      let base=null; if(w0>0 && h0>0){ base = ctx.getImageData(sx0, sy0, w0, h0); }
+      if(base){
+        const ox = sx0 - dx; const oy = sy0 - dy; // where to place base inside id
+        for(let by=0; by<h0; by++){
+          for(let bx=0; bx<w0; bx++){
+            const src=(by*base.width + bx)*4;
+            const dst=((by+oy)*w + (bx+ox))*4;
+            id.data[dst]   = base.data[src];
+            id.data[dst+1] = base.data[src+1];
+            id.data[dst+2] = base.data[src+2];
+            id.data[dst+3] = 255;
+          }
+        }
+      }
+
+      // 3) Blend desired color over the existing region, but only inside the circular brush mask
+      const [tr,tg,tb] = hexToRgb(colorPicker.value);
+      const t = Math.max(0, Math.min(1, blendEl.value/100));
+      for(let y=0;y<h;y++){
+        for(let x=0;x<w;x++){
+          const ii=(y*w+x)*4; const dxr=x-w/2, dyr=y-h/2; if(dxr*dxr+dyr*dyr > r*r) continue; // outside circle
+          const r0=id.data[ii], g0=id.data[ii+1], b0=id.data[ii+2];
+          id.data[ii]   = Math.round(r0*(1-t) + tr*t);
+          id.data[ii+1] = Math.round(g0*(1-t) + tg*t);
+          id.data[ii+2] = Math.round(b0*(1-t) + tb*t);
+          id.data[ii+3] = 255;
+        }
+      }
+
+      // 4) Quantize the WHOLE stamp with FS so error can spill into neighbors (i.e., influence what was there)
+      fsQuantizeStamp(id.data, w, h, palette);
+
+      // 5) Write back the whole region (so neighbors are actually updated)
+      ctx.save();
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.putImageData(id, dx, dy);
+      ctx.restore();
+    }
+
+    function beginStroke(x,y){ drawing=true; lastPos=[x,y]; history.push(ctx.getImageData(0,0,canvas.width,canvas.height)); updateUndoRedo(); drawDab(x,y); }
+    function continueStroke(x,y){ if(!drawing) return; const dx=x-lastPos[0], dy=y-lastPos[1]; const dist=Math.hypot(dx,dy);
+      const size = parseInt(brushSizeEl.value,10);
+      // Step proportional to brush size so stamps overlap but don't create continuous rails
+      const step = Math.max(1, size*0.35);
+      for(let t=step; t<=dist; t+=step){ const nx=lastPos[0]+dx*(t/dist); const ny=lastPos[1]+dy*(t/dist); drawDab(nx,ny); }
+      lastPos=[x,y]; }
+    function endStroke(){ drawing=false; lastPos=null; }
+
+    // Mouse/touch handlers
+    canvas.addEventListener('pointerdown', (e)=>{
+      const [x,y] = clientToCanvas(e.clientX,e.clientY);
+      if(spaceKey){ panning=true; panStart=[e.clientX, e.clientY]; panFrom=[offsetX, offsetY]; return; }
+      beginStroke(x,y);
+    });
+    window.addEventListener('pointermove', (e)=>{
+      if(panning){ const dx=e.clientX-panStart[0], dy=e.clientY-panStart[1]; offsetX=panFrom[0]+dx; offsetY=panFrom[1]+dy; drawView(); return; }
+      if(!drawing) return; const [x,y] = clientToCanvas(e.clientX,e.clientY); continueStroke(x,y);
+    });
+    window.addEventListener('pointerup', ()=>{ if(panning){ panning=false; } endStroke(); });
+
+    // Zoom
+    canvas.addEventListener('wheel', (e)=>{
+      if(!(e.ctrlKey||e.metaKey)) return; e.preventDefault();
+      const [mx,my] = clientToCanvas(e.clientX,e.clientY);
+      const factor = Math.exp(-e.deltaY*0.001);
+      zoom = Math.min(16, Math.max(0.25, zoom*factor));
+      // keep mouse focus stable
+      offsetX = mx*(1-zoom); offsetY = my*(1-zoom);
+      drawView(); updateLabels();
+    }, { passive:false });
+
+    // Keyboard
+    window.addEventListener('keydown', (e)=>{
+      if(e.code==='Space'){ spaceKey=true; document.body.style.cursor='grab'; }
+      if(e.key==='z' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); doUndo(); }
+      if(e.key==='y' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); doRedo(); }
+    });
+    window.addEventListener('keyup', (e)=>{ if(e.code==='Space'){ spaceKey=false; document.body.style.cursor='default'; }});
+
+    function doUndo(){ const img = history.undo(); if(img){ ctx.putImageData(img,0,0); } updateUndoRedo(); }
+    function doRedo(){ const img = history.redo(); if(img){ ctx.putImageData(img,0,0); } updateUndoRedo(); }
+    function updateUndoRedo(){ undoBtn.disabled = !history.canUndo(); redoBtn.disabled=!history.canRedo(); }
+
+    undoBtn.addEventListener('click', doUndo);
+    redoBtn.addEventListener('click', doRedo);
+
+    // Saving image
+    saveBtn.addEventListener('click', ()=>{
+      const a=document.createElement('a'); a.download='ditherpaint.png'; a.href=canvas.toDataURL('image/png'); a.click();
+    });
+
+    // Open image -> draw, but DO NOT dither automatically anymore
+    openBtn.addEventListener('click', ()=> openFile.click());
+    openFile.addEventListener('change', (e)=>{
+      const file = e.target.files && e.target.files[0]; if(!file) return;
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = ()=>{
+        URL.revokeObjectURL(url);
+        // resize canvas to image
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        ctx.imageSmoothingEnabled = false;
+        ctx.setTransform(1,0,0,1,0,0);
+        offsetX = 0; offsetY = 0; zoom = 1;
+        ctx.drawImage(img,0,0);
+        updateLabels(); drawView();
+        history.push(ctx.getImageData(0,0,canvas.width,canvas.height)); updateUndoRedo();
+        flash('Image loaded. Tweak your palette, then click "Dither Canvas Now".');
+        ditherBtn.disabled = palette.length===0; // enable if palette exists
+      };
+      img.onerror = ()=>{ URL.revokeObjectURL(url); flash('Could not load image.'); };
+      img.src = url;
+      // reset input so selecting the same file again triggers change
+      openFile.value = '';
+    });
+
+    // Dither on demand
+    function ditherWholeCanvas(){
+      const w = canvas.width, h = canvas.height; if(w===0||h===0) return;
+      const id = ctx.getImageData(0,0,w,h);
+      fsQuantizeStamp(id.data, w, h, palette);
+      ctx.putImageData(id,0,0);
+    }
+
+    ditherBtn.addEventListener('click', ()=>{
+      if(palette.length===0){ flash('Add at least 1 color to the palette before dithering.'); return; }
+      history.push(ctx.getImageData(0,0,canvas.width,canvas.height));
+      ditherWholeCanvas();
+      updateUndoRedo();
+      flash('Canvas dithered using current palette.');
+    });
+
+    // Save palette as JSON of hex colors
+    savePaletteBtn.addEventListener('click', ()=>{
+      const data = palette.map(p=> rgbToHex(...p.rgb));
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a'); a.download = 'palette.json'; a.href = URL.createObjectURL(blob); a.click();
+      setTimeout(()=> URL.revokeObjectURL(a.href), 1000);
+      flash('Palette saved as palette.json');
+    });
+
+    // Import palette from palette.json (array of hex strings)
+    importPaletteBtn.addEventListener('click', ()=> importPaletteFile.click());
+    importPaletteFile.addEventListener('change', async (e)=>{
+      try{
+        const file = e.target.files && e.target.files[0]; if(!file) return;
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        if(!Array.isArray(parsed)) throw new Error('Expected an array of hex colors');
+        // Normalize and validate hex strings
+        const items = parsed
+          .filter(x=> typeof x === 'string')
+          .map(x=> x.trim().toLowerCase())
+          .filter(x=> /^#?[0-9a-f]{6}$/.test(x))
+          .map(x=> x.startsWith('#')? x : '#'+x);
+        if(items.length===0) throw new Error('No valid #rrggbb colors found');
+        // Replace palette with imported values
+        palette.length = 0;
+        for(const hex of items){
+          const rgb = hexToRgb(hex);
+          palette.push({ rgb, oklab: rgbToOKLab(...rgb) });
+        }
+        renderPalette(); updateLabels(); drawPreview();
+        flash(`Imported ${items.length} palette color${items.length>1?'s':''}.`);
+      }catch(err){
+        console.error(err);
+        flash('Failed to import palette.json');
+      } finally {
+        importPaletteFile.value = '';
+      }
+    });
+
+    // View renderer: draw canvas with zoom/pan + optional brush cursor
+    const overlay = document.createElement('canvas'); overlay.width=canvas.width; overlay.height=canvas.height; const octx = overlay.getContext('2d');
+    function drawView(){
+      const wrap = canvas.parentElement; // using the same canvas; we simulate transform via CSS
+      canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`;
+    }
+
+    // Brush size updates
+    brushSizeEl.addEventListener('input', ()=>{ updateLabels(); });
+    blendEl.addEventListener('input', ()=>{ updateLabels(); });
+
+    // --- Lightweight runtime tests (console) ---
+    function runTests(){
+      try {
+        console.group('DitherPaint tests');
+        // hex/rgb roundtrip
+        console.assert(JSON.stringify(hexToRgb('#ff00aa'))==='[255,0,170]', 'hexToRgb works');
+        console.assert(rgbToHex(255,0,170)==='#ff00aa', 'rgbToHex works');
+        // nearestPaletteColor should pick exact when present
+        const palRG = [
+          { rgb:[255,0,0], oklab: rgbToOKLab(255,0,0) },
+          { rgb:[0,255,0], oklab: rgbToOKLab(0,255,0) }
+        ];
+        const near = nearestPaletteColor(250,10,10, palRG);
+        console.assert(near[0]===255 && near[1]===0 && near[2]===0, 'nearestPaletteColor prefers strong red');
+        // FS on 1x1 strong red must become red
+        const id1 = new ImageData(1,1); id1.data.set([250,10,10,255]);
+        fsQuantizeStamp(id1.data,1,1,palRG);
+        const q1 = [id1.data[0], id1.data[1], id1.data[2]];
+        console.assert(q1[0]===255 && q1[1]===0 && q1[2]===0, 'fsQuantizeStamp 1x1 quantizes to red');
+        // FS on 2x2 grayscale to BW should only output BW
+        const palBW = [
+          { rgb:[0,0,0], oklab: rgbToOKLab(0,0,0) },
+          { rgb:[255,255,255], oklab: rgbToOKLab(255,255,255) }
+        ];
+        const id2 = new ImageData(2,2);
+        id2.data.set([
+          0,0,0,255, 255,255,255,255,
+          128,128,128,255, 200,200,200,255
+        ]);
+        fsQuantizeStamp(id2.data,2,2,palBW);
+        for(let i=0;i<4;i++){
+          const r=id2.data[i*4], g=id2.data[i*4+1], b=id2.data[i*4+2];
+          const ok = (r===0&&g===0&&b===0)||(r===255&&g===255&&b===255);
+          console.assert(ok, 'BW palette produced only BW colors');
+        }
+        // Palette save serialization
+        const tmpPal = [ {rgb:[1,2,3]}, {rgb:[255,0,160]} ];
+        const serial = JSON.stringify(tmpPal.map(p=> rgbToHex(...p.rgb)));
+        console.assert(serial === '["#010203","#ff00a0"]', 'palette serialization to hex JSON');
+        // Nearest with empty palette returns same color
+        const same = nearestPaletteColor(12,34,56, []);
+        console.assert(same[0]===12 && same[1]===34 && same[2]===56, 'nearestPaletteColor returns input when palette empty');
+        // FS with empty palette should keep pixel unchanged
+        const id3 = new ImageData(1,1); id3.data.set([12,34,56,255]);
+        fsQuantizeStamp(id3.data,1,1,[]);
+        console.assert(id3.data[0]===12 && id3.data[1]===34 && id3.data[2]===56, 'fsQuantizeStamp no-op when palette empty');
+        console.log('All tests passed ✅');
+      } catch(e) {
+        console.error('Test failure ❌', e);
+      } finally { try{ console.groupEnd(); }catch(_){} }
+    }
+
+    // Init
+    function init(){
+      ctx.fillStyle = '#0b0d11'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      history.push(ctx.getImageData(0,0,canvas.width,canvas.height)); updateUndoRedo();
+      updateLabels(); renderPalette(); drawPreview(); drawView();
+    }
+
+    runTests();
+    init();
+  </script>
+</body>
+</html>
