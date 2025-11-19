@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DitherPunk v2: Full Suite</title>
+    <style>
+        :root {
+            --bg: #121214;
+            --panel: #1e1e24;
+            --input-bg: #2a2a32;
+            --text: #e1e1e6;
+            --accent: #00d2ff;
+            --border: #333;
+            --danger: #ff4444;
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', 'Segoe UI', monospace;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* --- Viewport --- */
+        #viewport {
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            background-image: 
+                radial-gradient(#2a2a32 15%, transparent 16%),
+                radial-gradient(#2a2a32 15%, transparent 16%);
+            background-size: 20px 20px;
+            background-position: 0 0, 10px 10px;
+            overflow: auto; /* Allow scrolling if canvas is huge */
+        }
+
+        canvas {
+            background: white;
+            box-shadow: 0 0 0 1px #000, 0 20px 60px rgba(0,0,0,0.7);
+            cursor: none;
+            image-rendering: pixelated;
+            display: block;
+        }
+
+        #cursor {
+            position: fixed; /* Changed to fixed to track properly in viewport */
+            border: 1px solid rgba(255,255,255,0.8);
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.5);
+            border-radius: 50%;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            z-index: 100;
+            mix-blend-mode: difference;
+        }
+
+        /* --- Sidebar --- */
+        #controls {
+            width: 340px;
+            background-color: var(--panel);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+            box-shadow: -5px 0 20px rgba(0,0,0,0.5);
+        }
+
+        .header {
+            padding: 20px;
+            background: linear-gradient(180deg, #25252d 0%, var(--panel) 100%);
+            border-bottom: 1px solid var(--border);
+        }
+        .header h1 {
+            margin: 0; font-size: 1.2rem; letter-spacing: 2px;
+            text-transform: uppercase; color: var(--accent);
+            text-shadow: 0 0 10px rgba(0, 210, 255, 0.3);
+        }
+
+        .scroll-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* --- Components --- */
+        .section-title {
+            font-size: 0.7rem; color: #666; text-transform: uppercase; 
+            letter-spacing: 1px; font-weight: bold; border-bottom: 1px solid #333;
+            padding-bottom: 5px; margin-bottom: 10px;
+        }
+
+        .control-group { display: flex; flex-direction: column; gap: 8px; }
+        
+        .label-row {
+            display: flex; justify-content: space-between;
+            font-size: 0.75rem; font-weight: 700; color: #aaa;
+        }
+        .value-disp { color: var(--accent); }
+
+        input[type="range"] {
+            -webkit-appearance: none; width: 100%; height: 4px;
+            background: var(--input-bg); border-radius: 2px; outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 16px; height: 16px;
+            background: var(--text); border-radius: 50%; cursor: pointer;
+            transition: 0.2s; border: 2px solid var(--panel);
+        }
+        input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent); transform: scale(1.1); }
+
+        /* Inputs & Buttons */
+        .row { display: flex; gap: 8px; }
+        
+        input[type="number"] {
+            background: var(--input-bg); border: 1px solid #333;
+            color: white; padding: 8px; border-radius: 4px; width: 100%;
+            font-family: monospace;
+        }
+
+        .btn {
+            flex: 1; padding: 10px; border: none; border-radius: 4px;
+            font-weight: 700; cursor: pointer; transition: 0.2s;
+            font-size: 0.75rem; color: white; background: #333;
+        }
+        .btn:hover { background: #444; }
+        .btn-primary { background: var(--accent); color: #000; }
+        .btn-primary:hover { background: #fff; }
+        .btn-action { background: #4a4a55; border: 1px solid #5a5a66; }
+        .btn-action:hover { background: var(--accent); color: black; border-color: var(--accent); }
+        
+        .file-upload {
+            display: none;
+        }
+        .upload-label {
+            display: flex; align-items: center; justify-content: center;
+            background: #333; padding: 10px; border-radius: 4px; cursor: pointer;
+            font-size: 0.75rem; font-weight: bold; border: 1px dashed #666;
+            transition: 0.2s;
+        }
+        .upload-label:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* Palette Grid */
+        .palette-area {
+            background: var(--input-bg); padding: 10px; border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        .palette-grid {
+            display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
+            margin-bottom: 10px;
+        }
+        .swatch {
+            aspect-ratio: 1; border-radius: 4px; cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.1); position: relative;
+        }
+        .swatch:hover { transform: scale(1.1); border-color: white; z-index: 2; }
+        .swatch.active { box-shadow: 0 0 0 2px var(--accent); border-color: transparent; }
+        .swatch .x-btn {
+            position: absolute; top: -4px; right: -4px;
+            width: 12px; height: 12px; background: var(--danger); color: white;
+            font-size: 8px; display: none; align-items: center; justify-content: center;
+            border-radius: 50%;
+        }
+        .swatch:hover .x-btn { display: flex; }
+
+        .add-color-row { display: flex; gap: 5px; }
+        .hex-input {
+            flex: 1; background: #1a1a20; border: 1px solid #333;
+            color: white; padding: 6px; font-family: monospace; font-size: 0.8rem;
+            border-radius: 4px;
+        }
+        .btn-icon {
+            background: #333; color: white; border: none; width: 30px;
+            border-radius: 4px; cursor: pointer; font-weight: bold;
+        }
+        .btn-icon:hover { background: var(--accent); color: black; }
+
+        /* Bottom Actions */
+        .actions {
+            padding: 20px; border-top: 1px solid var(--border);
+            display: flex; gap: 10px;
+        }
+        .btn-danger { background: #2a2a32; color: var(--danger); }
+        .btn-danger:hover { background: var(--danger); color: white; }
+    </style>
+</head>
+<body>
+
+<div id="viewport">
+    <canvas id="canvas" width="800" height="600"></canvas>
+    <div id="cursor"></div>
+</div>
+
+<div id="controls">
+    <div class="header">
+        <h1>DitherPunk v2</h1>
+        <div style="font-size: 0.7rem; opacity: 0.6;">Floyd-Steinberg Suite</div>
+    </div>
+
+    <div class="scroll-content">
+        
+        <!-- Canvas Operations -->
+        <div>
+            <div class="section-title">Canvas Operations</div>
+            <div class="control-group">
+                <div class="row">
+                    <input type="number" id="c-width" placeholder="W" value="800">
+                    <input type="number" id="c-height" placeholder="H" value="600">
+                    <button class="btn" onclick="resizeCanvas()">Resize</button>
+                </div>
+                
+                <label class="upload-label">
+                    Upload Image to Canvas
+                    <input type="file" id="imgUpload" class="file-upload" accept="image/*">
+                </label>
+
+                <button class="btn btn-action" onclick="applyGlobalDither()">⚡ Dither Whole Canvas</button>
+            </div>
+        </div>
+
+        <!-- Brush Settings -->
+        <div>
+            <div class="section-title">Brush Engine</div>
+            <div class="control-group">
+                <div class="label-row"><span>Target Color</span></div>
+                <input type="color" id="mainColor" style="width:100%; height:30px; border:none; cursor:pointer;" value="#ff0055">
+            </div>
+    
+            <div class="control-group">
+                <div class="label-row"><span>Size</span> <span class="value-disp" id="v-size">50px</span></div>
+                <input type="range" id="p-size" min="2" max="200" value="50">
+            </div>
+    
+            <div class="control-group">
+                <div class="label-row"><span>Flow (Opacity)</span> <span class="value-disp" id="v-flow">15%</span></div>
+                <input type="range" id="p-flow" min="1" max="100" value="15">
+            </div>
+
+            <div class="control-group">
+                <div class="label-row"><span>Hardness</span> <span class="value-disp" id="v-hard">0%</span></div>
+                <input type="range" id="p-hard" min="0" max="100" value="0">
+            </div>
+        </div>
+
+        <!-- Algorithm Settings -->
+        <div>
+            <div class="section-title">Algorithm</div>
+            <div class="control-group">
+                <div class="label-row"><span>Error Bleed</span> <span class="value-disp" id="v-err">100%</span></div>
+                <input type="range" id="p-err" min="0" max="150" value="100">
+            </div>
+    
+            <div class="control-group">
+                <div class="label-row"><span>Noise (Jitter)</span> <span class="value-disp" id="v-noise">10%</span></div>
+                <input type="range" id="p-noise" min="0" max="100" value="10">
+            </div>
+        </div>
+
+        <!-- Palette System -->
+        <div>
+            <div class="section-title">Palette (<span id="v-pal-count">5</span>)</div>
+            <div class="palette-area">
+                <div class="palette-grid" id="paletteContainer"></div>
+                <div class="add-color-row">
+                    <input type="text" id="hexInput" class="hex-input" placeholder="#RRGGBB">
+                    <button id="btnAddColor" class="btn-icon">+</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="actions">
+        <button class="btn btn-danger" onclick="wipeCanvas()">CLEAR</button>
+        <button class="btn btn-primary" onclick="downloadArt()">SAVE PNG</button>
+    </div>
+</div>
+
+<script>
+/**
+ * DITHERPUNK V2 ENGINE
+ */
+
+const state = {
+    isDrawing: false,
+    lastX: 0, lastY: 0,
+    color: {r: 255, g: 0, b: 85},
+    
+    // Parameters
+    size: 50,
+    flow: 0.15,
+    hardness: 0.0,
+    errorBleed: 1.0,
+    noise: 0.1,
+    density: 1.0
+};
+
+let palette = [
+    {r:0, g:0, b:0},       
+    {r:255, g:255, b:255}, 
+    {r:85, g:255, b:255},  
+    {r:255, g:85, b:255},  
+    {r:255, g:255, b:85},  
+];
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const cursor = document.getElementById('cursor');
+
+// --- Initialization ---
+function init() {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    renderPalette();
+    bindEvents();
+}
+
+// --- Math Helpers ---
+function getNearestColor(r, g, b) {
+    let minDist = Infinity;
+    let nearest = palette[0];
+    for (let i = 0; i < palette.length; i++) {
+        const p = palette[i];
+        const rmean = (r + p.r) / 2;
+        const dr = r - p.r;
+        const dg = g - p.g;
+        const db = b - p.b;
+        const dist = Math.sqrt((((512+rmean)*dr*dr)>>8) + 4*dg*dg + (((767-rmean)*db*db)>>8));
+        if (dist < minDist) { minDist = dist; nearest = p; }
+    }
+    return nearest;
+}
+
+// --- The Brush Engine ---
+function paint(x, y) {
+    const r = Math.floor(state.size / 2);
+    const sx = Math.max(0, x - r);
+    const sy = Math.max(0, y - r);
+    const ex = Math.min(canvas.width, x + r);
+    const ey = Math.min(canvas.height, y + r);
+    const w = ex - sx;
+    const h = ey - sy;
+
+    if (w <= 0 || h <= 0) return;
+
+    const imgData = ctx.getImageData(sx, sy, w, h);
+    const data = imgData.data;
+    const buffer = new Float32Array(w * h * 3);
+
+    // 1. Prepare Ideal Mix Buffer
+    for (let py = 0; py < h; py++) {
+        for (let px = 0; px < w; px++) {
+            const i4 = (py * w + px) * 4;
+            const i3 = (py * w + px) * 3;
+            
+            const gx = sx + px;
+            const gy = sy + py;
+            const dist = Math.sqrt((gx - x)**2 + (gy - y)**2);
+
+            if (dist > r) {
+                buffer[i3] = data[i4]; buffer[i3+1] = data[i4+1]; buffer[i3+2] = data[i4+2];
+                continue;
+            }
+
+            let normDist = dist / r;
+            let shapeAlpha = Math.cos(normDist * Math.PI / 2);
+            if (state.hardness > 0) shapeAlpha = Math.min(1, shapeAlpha * (1 + state.hardness * 5));
+            
+            const alpha = shapeAlpha * state.flow;
+
+            buffer[i3]   = data[i4]   + (state.color.r - data[i4]) * alpha;
+            buffer[i3+1] = data[i4+1] + (state.color.g - data[i4+1]) * alpha;
+            buffer[i3+2] = data[i4+2] + (state.color.b - data[i4+2]) * alpha;
+
+            if (state.noise > 0) {
+                const noiseVal = (Math.random() - 0.5) * state.noise * 255;
+                buffer[i3] += noiseVal; buffer[i3+1] += noiseVal; buffer[i3+2] += noiseVal;
+            }
+        }
+    }
+
+    // 2. Error Diffusion
+    for (let py = 0; py < h; py++) {
+        for (let px = 0; px < w; px++) {
+            const i3 = (py * w + px) * 3;
+            const oldR = buffer[i3], oldG = buffer[i3+1], oldB = buffer[i3+2];
+            const nearest = getNearestColor(oldR, oldG, oldB);
+
+            const errR = (oldR - nearest.r) * state.errorBleed;
+            const errG = (oldG - nearest.g) * state.errorBleed;
+            const errB = (oldB - nearest.b) * state.errorBleed;
+
+            // Commit to canvas only if in circle
+            const gx = sx + px;
+            const gy = sy + py;
+            if (Math.sqrt((gx - x)**2 + (gy - y)**2) <= r) {
+                const i4 = (py * w + px) * 4;
+                data[i4] = nearest.r; data[i4+1] = nearest.g; data[i4+2] = nearest.b; data[i4+3] = 255;
+            }
+
+            // Distribute Error
+            if (px + 1 < w) {
+                const ni = (py * w + px + 1) * 3;
+                buffer[ni] += errR * 7/16; buffer[ni+1] += errG * 7/16; buffer[ni+2] += errB * 7/16;
+            }
+            if (px - 1 >= 0 && py + 1 < h) {
+                const ni = ((py + 1) * w + px - 1) * 3;
+                buffer[ni] += errR * 3/16; buffer[ni+1] += errG * 3/16; buffer[ni+2] += errB * 3/16;
+            }
+            if (py + 1 < h) {
+                const ni = ((py + 1) * w + px) * 3;
+                buffer[ni] += errR * 5/16; buffer[ni+1] += errG * 5/16; buffer[ni+2] += errB * 5/16;
+            }
+            if (px + 1 < w && py + 1 < h) {
+                const ni = ((py + 1) * w + px + 1) * 3;
+                buffer[ni] += errR * 1/16; buffer[ni+1] += errG * 1/16; buffer[ni+2] += errB * 1/16;
+            }
+        }
+    }
+    ctx.putImageData(imgData, sx, sy);
+}
+
+// --- NEW: Global Canvas Operations ---
+
+function applyGlobalDither() {
+    const w = canvas.width;
+    const h = canvas.height;
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+    
+    // We use a Float32 buffer to hold values + error
+    // Initializing it with current pixel data
+    const buffer = new Float32Array(w * h * 3);
+    
+    for(let i = 0; i < w*h; i++) {
+        const i4 = i*4;
+        const i3 = i*3;
+        
+        let r = data[i4];
+        let g = data[i4+1];
+        let b = data[i4+2];
+
+        // Add noise if configured (Global dither should respect the noise slider!)
+        if (state.noise > 0) {
+            const noiseVal = (Math.random() - 0.5) * state.noise * 255;
+            r += noiseVal; g += noiseVal; b += noiseVal;
+        }
+
+        buffer[i3] = r;
+        buffer[i3+1] = g;
+        buffer[i3+2] = b;
+    }
+
+    // Full Frame Floyd-Steinberg
+    for (let py = 0; py < h; py++) {
+        for (let px = 0; px < w; px++) {
+            const i3 = (py * w + px) * 3;
+            const oldR = buffer[i3];
+            const oldG = buffer[i3+1];
+            const oldB = buffer[i3+2];
+
+            const nearest = getNearestColor(oldR, oldG, oldB);
+
+            const errR = (oldR - nearest.r) * state.errorBleed;
+            const errG = (oldG - nearest.g) * state.errorBleed;
+            const errB = (oldB - nearest.b) * state.errorBleed;
+
+            // Write to integer array
+            const i4 = (py * w + px) * 4;
+            data[i4] = nearest.r;
+            data[i4+1] = nearest.g;
+            data[i4+2] = nearest.b;
+            data[i4+3] = 255;
+
+            // Distribute Error
+            if (px + 1 < w) {
+                const ni = (py * w + px + 1) * 3;
+                buffer[ni] += errR * 7/16; buffer[ni+1] += errG * 7/16; buffer[ni+2] += errB * 7/16;
+            }
+            if (px - 1 >= 0 && py + 1 < h) {
+                const ni = ((py + 1) * w + px - 1) * 3;
+                buffer[ni] += errR * 3/16; buffer[ni+1] += errG * 3/16; buffer[ni+2] += errB * 3/16;
+            }
+            if (py + 1 < h) {
+                const ni = ((py + 1) * w + px) * 3;
+                buffer[ni] += errR * 5/16; buffer[ni+1] += errG * 5/16; buffer[ni+2] += errB * 5/16;
+            }
+            if (px + 1 < w && py + 1 < h) {
+                const ni = ((py + 1) * w + px + 1) * 3;
+                buffer[ni] += errR * 1/16; buffer[ni+1] += errG * 1/16; buffer[ni+2] += errB * 1/16;
+            }
+        }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+}
+
+function resizeCanvas() {
+    const w = parseInt(document.getElementById('c-width').value) || 800;
+    const h = parseInt(document.getElementById('c-height').value) || 600;
+    
+    // Save current content
+    const savedData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    canvas.width = w;
+    canvas.height = h;
+    
+    // Fill white first
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, w, h);
+    
+    // Restore content
+    ctx.putImageData(savedData, 0, 0);
+}
+
+// Handle Image Upload
+document.getElementById('imgUpload').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+            // Resize canvas to match image
+            canvas.width = img.width;
+            canvas.height = img.height;
+            
+            // Update inputs
+            document.getElementById('c-width').value = img.width;
+            document.getElementById('c-height').value = img.height;
+
+            // Draw image
+            ctx.drawImage(img, 0, 0);
+        }
+        img.src = event.target.result;
+    }
+    reader.readAsDataURL(file);
+});
+
+// --- Event Handling ---
+function bindEvents() {
+    const onMove = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const cx = e.clientX || (e.touches && e.touches[0].clientX);
+        const cy = e.clientY || (e.touches && e.touches[0].clientY);
+        
+        cursor.style.left = cx + 'px';
+        cursor.style.top = cy + 'px';
+
+        if (!state.isDrawing) return;
+
+        const x = Math.floor(cx - rect.left);
+        const y = Math.floor(cy - rect.top);
+
+        // Interpolation for smooth strokes
+        const dist = Math.hypot(x - state.lastX, y - state.lastY);
+        const step = Math.max(1, state.size / 4);
+
+        if (dist > step) {
+            const steps = dist / step;
+            for (let i = 0; i < steps; i++) {
+                const lx = state.lastX + (x - state.lastX) * (i / steps);
+                const ly = state.lastY + (y - state.lastY) * (i / steps);
+                paint(Math.floor(lx), Math.floor(ly));
+            }
+        } else {
+            paint(x, y);
+        }
+        state.lastX = x; state.lastY = y;
+    };
+
+    const onDown = (e) => {
+        state.isDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        const cx = e.clientX || (e.touches && e.touches[0].clientX);
+        const cy = e.clientY || (e.touches && e.touches[0].clientY);
+        state.lastX = Math.floor(cx - rect.left);
+        state.lastY = Math.floor(cy - rect.top);
+        paint(state.lastX, state.lastY);
+    };
+
+    const onUp = () => state.isDrawing = false;
+
+    canvas.addEventListener('mousedown', onDown);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    
+    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); onDown(e); });
+    window.addEventListener('touchmove', onMove);
+    window.addEventListener('touchend', onUp);
+
+    bindUI();
+}
+
+function bindUI() {
+    const bindRange = (id, key, scale = 1, suffix = '') => {
+        const el = document.getElementById(id);
+        const disp = document.getElementById('v-' + id.split('-')[1]);
+        el.addEventListener('input', (e) => {
+            let val = parseFloat(e.target.value);
+            state[key] = val / scale;
+            disp.innerText = val + suffix;
+            if(key === 'size') {
+                cursor.style.width = val + 'px';
+                cursor.style.height = val + 'px';
+            }
+        });
+    };
+
+    bindRange('p-size', 'size', 1, 'px');
+    bindRange('p-flow', 'flow', 100, '%');
+    bindRange('p-hard', 'hardness', 100, '%');
+    bindRange('p-err', 'errorBleed', 100, '%');
+    bindRange('p-noise', 'noise', 100, '%');
+
+    document.getElementById('mainColor').addEventListener('input', (e) => {
+        state.color = hexToRgb(e.target.value);
+    });
+
+    document.getElementById('btnAddColor').addEventListener('click', () => {
+        const input = document.getElementById('hexInput');
+        const hex = input.value.trim();
+        const rgb = hexToRgb(hex.startsWith('#') ? hex : '#' + hex);
+        if (rgb) {
+            palette.push(rgb);
+            renderPalette();
+            input.value = '';
+        }
+    });
+}
+
+function renderPalette() {
+    const container = document.getElementById('paletteContainer');
+    container.innerHTML = '';
+    document.getElementById('v-pal-count').innerText = palette.length;
+
+    palette.forEach((c, index) => {
+        const div = document.createElement('div');
+        div.className = 'swatch';
+        div.style.backgroundColor = `rgb(${c.r},${c.g},${c.b})`;
+        
+        if (c.r === state.color.r && c.g === state.color.g && c.b === state.color.b) {
+            div.classList.add('active');
+        }
+
+        div.onclick = () => {
+            state.color = c;
+            document.getElementById('mainColor').value = rgbToHex(c.r, c.g, c.b);
+            renderPalette();
+        };
+
+        const btn = document.createElement('div');
+        btn.className = 'x-btn';
+        btn.innerText = '×';
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            if (palette.length > 2) {
+                palette.splice(index, 1);
+                renderPalette();
+            }
+        };
+
+        div.appendChild(btn);
+        container.appendChild(div);
+    });
+}
+
+function wipeCanvas() {
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function downloadArt() {
+    const link = document.createElement('a');
+    link.download = 'dither-art.png';
+    link.href = canvas.toDataURL();
+    link.click();
+}
+
+function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : null;
+}
+
+function rgbToHex(r, g, b) {
+    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+
+init();
+</script>
+</body>
+</html>
