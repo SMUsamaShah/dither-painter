@@ -1,6 +1,12 @@
 # dither-painter
 
-Made with ChatGPT 5
+Made with ChatGPT 5, Claude, Gemini 3 Pro
+
+https://smusamashah.github.io/dither-painter/dither-painter-chatgpt.html
+https://smusamashah.github.io/dither-painter/dither-painter-gemini3pro.html
+https://smusamashah.github.io/dither-painter/dither-painter-claude.html
+
+
 
 ## First main prompt.
 
